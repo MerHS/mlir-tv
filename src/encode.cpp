@@ -959,42 +959,6 @@ void encodeOp(State &st, mlir::tosa::BitwiseXorOp op, bool) {
 }
 
 template<>
-void encodeOp(State &st, mlir::tosa::TransposeOp op, bool) {
-  auto dty = op.getType().dyn_cast<mlir::RankedTensorType>();
-  if (!dty)
-    throw UnsupportedException(op.getOperation(), "Unsupported type");
-
-  mlir::Value i = op.input1();
-  mlir::Value p = op.perms();
-  auto ity = i.getType().dyn_cast<mlir::RankedTensorType>();
-  auto pty = p.getType().dyn_cast<mlir::RankedTensorType>();
-  if(!getElemTy(p).isa<mlir::IntegerType>())
-    throw UnsupportedException(op.getOperation(), "Unsupported element type");
-
-  assert(pty.getRank() == 1 && pty.getDimSize(0) == ity.getRank());
-
-  auto input = st.regs.get<Tensor>(i);
-  auto perms = st.regs.get<Tensor>(p);
-
-  vector<Expr> indVars = Index::boundIndexVars(input.getRank());
-  vector<Expr> dims, outVars;
-
-  llvm::outs() << p << "\n";
-  llvm::outs() << perms << "\n";
-  
-  // for (unsigned i = 0; i < input.getRank(); i++) {
-  //   perms;
-  // }
-
-  // st.regs.add(op, Tensor::mkLambda(
-  //     input.getElemType(), move(dims), move(indVars), output, Expr::mkBool(true)));
-
-
-  
-}
-
-
-template<>
 void encodeOp(State &st, mlir::tensor::ExtractOp op, bool) {
   // TODO: The MLIR doc isn't explicit about what happens if indices are
   // out-of-bounds. It is currently encoded as UB.
@@ -1341,16 +1305,24 @@ void encodeOp(State &st, mlir::tensor::CastOp op, bool) {
 
 template<>
 void encodeOp(State &st, mlir::tensor::InsertOp op, bool) {
-  auto val = st.regs.get<Float>(op.scalar());
   auto dest = st.regs.get<Tensor>(op.dest());
 
   vector<Expr> indices;
   for (auto idx0: op.indices())
     indices.emplace_back(st.regs.get<Index>(idx0));
 
-  auto [tensor, inbounds] = dest.insert(val, indices);
-  st.regs.add(op, move(tensor));
-  st.wellDefined(op, move(inbounds));
+  if (op.scalar().getType().isa<mlir::FloatType>()) {
+    auto val = st.regs.get<Float>(op.scalar());
+    auto [tensor, inbounds] = dest.insert(val, indices);
+    st.regs.add(op, move(tensor));
+    st.wellDefined(op, move(inbounds));
+  } else {
+    auto val = st.regs.get<Integer>(op.scalar());
+    auto [tensor, inbounds] = dest.insert(val, indices);
+    st.regs.add(op, move(tensor));
+    st.wellDefined(op, move(inbounds));    
+  }
+
 }
 
 template<>
@@ -2491,7 +2463,6 @@ static void encodeBlock(
     ENCODE(st, op, mlir::tosa::ReverseOp, encodeMemWriteOps);
     ENCODE(st, op, mlir::tosa::SubOp, encodeMemWriteOps);
     ENCODE(st, op, mlir::tosa::TileOp, encodeMemWriteOps);
-    ENCODE(st, op, mlir::tosa::TransposeOp, encodeMemWriteOps);
 
     throw UnsupportedException(&op);
   }
